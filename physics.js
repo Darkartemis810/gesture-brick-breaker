@@ -25,16 +25,12 @@ export const Physics = {
         if (!this.world) return;
         this.world.step();
         
-        // Sync Visuals
+        // Sync Visuals — update ALL bodies (dynamic + kinematic)
         this.bodies.forEach((body, mesh) => {
-            // If body is kinematic, it drives the mesh.
-            // If body is dynamic, we update the mesh from the body.
-            if (body.numElements !== undefined || body.isDynamic()) {
-                 const translation = body.translation();
-                 const rotation = body.rotation();
-                 mesh.position.set(translation.x, translation.y, translation.z);
-                 mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-            }
+            const translation = body.translation();
+            const rotation = body.rotation();
+            mesh.position.set(translation.x, translation.y, translation.z);
+            mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
         });
     },
 

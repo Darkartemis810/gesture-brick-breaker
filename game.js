@@ -100,7 +100,12 @@ class Game {
     }
 
     spawnPaddle() {
-        if (this.state.paddleBody) return; // already exists
+        // Destroy old paddle if it exists (important for restart)
+        if (this.state.paddleBody) {
+            Physics.removeObject(this.paddleMesh, this.state.paddleBody);
+            Renderer.scene.remove(this.paddleMesh);
+            this.state.paddleBody = null;
+        }
         
         const mesh = Renderer.createPaddle(this.state.paddleWidth, 1.0, 1.5);
         mesh.position.set(0, 0.5, 12);
@@ -153,14 +158,29 @@ class Game {
     }
 
     startGame() {
+        // Hide overlay and start button
+        UI.hideOverlay();
         UI.elements.startBtn.classList.add('hidden');
+        
+        // Reset state
         this.state.isPlaying = true;
         this.state.score = 0;
         this.state.lives = 3;
         this.state.level = 1;
+        this.state.combo = 1;
+        
+        // Update all UI displays
         UI.setScore(0);
         UI.setLives(3);
         UI.setLevel(1);
+        UI.setCombo(1);
+        
+        // Clean up old ball if exists
+        if (this.state.ballBody) {
+            Physics.removeObject(this.ballMesh, this.state.ballBody);
+            Renderer.scene.remove(this.ballMesh);
+            this.state.ballBody = null;
+        }
         
         this.spawnPaddle();
         this.loadLevel(this.state.level);
