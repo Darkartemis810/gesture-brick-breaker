@@ -1,279 +1,95 @@
-# 🎮 Gesture Brick Breaker
+# 🎮 Gesture Brick Breaker: Pro Overdrive
 
-A fully browser-based, real-time **3D Brick Breaker** game where you control the paddle entirely through **webcam hand gestures**. No plugins, no server — everything runs client-side using WebGL and WebAssembly.
+A production-grade, real-time **3D Hand-Gesture Controlled Brick Breaker** built with Three.js, Rapier3D, and MediaPipe. This version is a complete overhaul featuring advanced feature engineering, special abilities, power-ups, and post-processing.
 
-![Gesture Brick Breaker](https://img.shields.io/badge/Three.js-r160-blue) ![Rapier3D](https://img.shields.io/badge/Rapier3D-0.12-green) ![MediaPipe](https://img.shields.io/badge/MediaPipe-Hands-orange)
-
----
-
-## 🚀 Quick Start
-
-```bash
-# Clone the repo
-git clone https://github.com/Darkartemis810/gesture-brick-breaker.git
-cd gesture-brick-breaker
-
-# Start a local server (any of these work)
-python -m http.server 3000
-# or
-npx http-server -c-1
-
-# Open in browser
-http://localhost:3000
-```
-
-> **Important**: You need a webcam for gesture control. Allow camera permissions when prompted.
+![Vercel Deployment](https://img.shields.io/badge/Vercel-Deployed-brightgreen) ![Three.js](https://img.shields.io/badge/Three.js-r160-blue) ![Rapier3D](https://img.shields.io/badge/Rapier3D-0.12-orange)
 
 ---
 
-## 🕹️ How to Play
+## 🚀 Overdrive Features
 
-### Controls
+### 🧠 Advanced Gesture System
+Built on a ported Python feature-engineering pipeline, the game detects **5 distinct gestures** with a 5-frame majority-vote buffer to eliminate flicker:
+- ✋ **OPEN_HAND**: Default state. Paddle width 10.
+- ✊ **FIST**: 2× Score Multiplier active. Paddle width shrinks to 4.
+- 🤏 **PINCH**: Triggers **Laser** (5s cooldown) — destroys the first brick in its path.
+- 👊 **PUNCH**: Triggers **Smash** (8s cooldown) — 12-unit radial shockwave destruction.
+- ✌️ **PEACE**: Triggers **Time Freeze** (1/level) — pauses physics for 2 seconds.
 
-| Gesture | Action |
-|---------|--------|
-| ✋ **Any Hand Visible** | Paddle follows your hand position left/right |
-| ✊ **Closed Fist** | Paddle follows hand (same as open — always active) |
-| 👊 **Punch Forward** | **SMASH MODE** — Destroys 3 nearest bricks instantly (8s cooldown) |
+### 🧱 New Brick Ecosystem
+- **Type 1 (Cyan)**: 1 hit, standard.
+- **Type 2 (Green)**: 2 hits. Shows "cracked" state (yellow) after first hit.
+- **Type 3 (Purple)**: EXPLOSIVE. Deals 1 damage to all 8 surrounding bricks on destruction.
+- **Type 4 (Magenta)**: REGENERATING. Restores itself 8 seconds after destruction if the level isn't cleared.
+- **Type 5 (Orange)**: IMMUNE. Deflects the ball at random angles. Only destroyable by Smash or Laser.
 
-### Gameplay Loop
+### ⚡ Power-Up Orbs
+15% drop chance on brick destruction. 4 types of falling physical orbs:
+- 🟡 **MULTIBALL**: Clones the ball twice for 10 seconds.
+- 🔵 **MAGNET**: Gentle magnetic pull toward the paddle for 6 seconds.
+- 🔴 **NUKE**: Instantly wipes all Cyan and Green bricks on field.
+- 🟡 **SCORE SURGE**: 3× Score Multiplier for 8 seconds (stacks with FIST 2×).
 
-1. **Allow webcam access** when the browser asks.
-2. Hold your hand in front of the camera until the side panel says **"TRACKING"** or **"CONTROLLING"**.
-3. Click the **Start Game** button.
-4. The ball launches automatically — move your hand left/right to steer the paddle.
-5. Bounce the ball off the paddle to destroy bricks.
-6. Clear all bricks to advance to the next level.
-7. You have **3 lives** — if the ball passes your paddle, you lose one.
-8. When all lives are lost, click **"Play Again"** to restart.
-
----
-
-## 🏗️ Game Mechanics
-
-### 🏐 Ball Physics
-- The ball moves at a constant normalized speed that increases slightly with each level (`baseSpeed × (1 + level × 0.08)`).
-- Ball is constrained to a 2D plane (Y is locked at 0.6).
-- **Anti-stuck logic**: If the ball gets trapped moving horizontally (Z velocity < 1.0), it gets a nudge to break free.
-- **Strict boundary clamping**: The ball is forcefully kept within the visible field. If it escapes X or Z bounds, it's teleported back and its velocity is reflected.
-- Ball bouncing angle off the paddle depends on **where** it hits:
-  - Center hit → ball goes straight up
-  - Edge hit → ball bounces at up to ~51° angle
-
-### 🧱 Bricks
-- Each level has a **10-column grid** of bricks.
-- Brick types (1–5) determine their **color**:
-  - `1` = 🔵 Cyan
-  - `2` = 🟢 Neon Green
-  - `3` = 🟣 Purple
-  - `4` = 🩷 Magenta
-  - `5` = 🟠 Orange
-- All bricks are destroyed in one hit.
-- Destroyed bricks spawn **4 debris fragments** that fly outward with physics-based impulse and fade over 2.5 seconds.
-
-### 🏓 Paddle
-- Width: **7 units** (slightly wider than standard for accessibility).
-- Kinematic body — moved by your hand's X position.
-- The paddle is **clamped** within the field boundaries so it can't escape off-screen.
-- Has a glowing **cyan point light** attached for visual flair.
-
-### 💥 Smash Mode
-- Triggered by **punching forward** (detected via wrist Z-depth velocity).
-- Destroys the **3 nearest active bricks** instantly.
-- **8-second cooldown** between smashes.
-- Triggers a **magenta screen flash** effect.
+### ✨ High-End Visuals
+- **Bloom Post-Processing**: UnrealBloomPass provides neon glows for all emissive elements.
+- **3D Floating Scores**: Real-time popups at brick positions using `CSS2DRenderer`.
+- **Dynamic HUD**: SVG circular arcs tracking ability cooldowns in real-time.
+- **Environment**: Procedural starfield and grid floor with dynamic camera shake.
 
 ---
 
-## 🎯 Scoring System
+## 🕹️ Controls
 
-### Base Points
-| Action | Points |
-|--------|--------|
-| Destroy Brick (Type 1) | 50 × combo |
-| Destroy Brick (Type 2) | 100 × combo |
-| Destroy Brick (Type 3) | 150 × combo |
-| Destroy Brick (Type 4) | 200 × combo |
-| Destroy Brick (Type 5) | 250 × combo |
-| Smash Brick | 200 × combo |
-| Level Clear Bonus | 1000 × level number |
+| Move Hand | Paddle Steering |
+|-----------|-----------------|
+| **Pinch** | Fire Laser      |
+| **Punch** | Perform Smash   |
+| **Peace** | Time Freeze     |
+| **Fist**  | 2× Points       |
 
-### Combo System
-- Every brick destroyed increases your **combo multiplier** by 1.
-- Combos **reset to x1** if you go **3 seconds** without hitting a brick.
-- Combos also reset when you **lose a life**.
-- At **x3+ combo**, a floating popup shows: `x3 COMBO! +450`.
-- Chain hits quickly to rack up massive scores!
+---
 
-**Example combo chain:**
-```
-Hit 1: 50 × 1 = 50     (combo x1)
-Hit 2: 100 × 2 = 200   (combo x2)
-Hit 3: 150 × 3 = 450   (combo x3 — popup appears!)
-Hit 4: 50 × 4 = 200    (combo x4)
-...keep chaining for exponential scores!
+## 🌐 Deployment
+
+The game is optimized for **Vercel** with a zero-build setup. 
+
+**Requirements for Rapier3D WASM (SharedArrayBuffer):**
+The `vercel.json` file must include these headers to enable the browser's high-security mode:
+```json
+{
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
+      ]
+    }
+  ]
+}
 ```
 
 ---
 
-## 🗺️ Levels
+## 🛠️ Architecture
 
-The game ships with **5 levels** that loop infinitely with increasing ball speed:
-
-### Level 1 — Full Wall
-```
-██████████
-██████████
-██████████
-██████████
-██████████
-```
-50 bricks. Simple intro — smash everything!
-
-### Level 2 — Checkerboard
-```
-█ █ █ █ █ 
- █ █ █ █ █
-█ █ █ █ █ 
- █ █ █ █ █
-█ █ █ █ █ 
- █ █ █ █ █
-```
-30 bricks. The gaps let the ball pass through unpredictably.
-
-### Level 3 — Fortress
-```
-██████████
-█        █
-█ ██████ █
-█ █    █ █
-█ ██████ █
-█        █
-██████████
-```
-40 bricks. You need to break through the outer walls first.
-
-### Level 4 — Arrow
-```
-    ██    
-   ████   
-  ██████  
- ████████ 
-██████████
- ████████ 
-  ██████  
-   ████   
-```
-56 bricks. Dense expanding/contracting pattern.
-
-### Level 5 — Zigzag
-```
-███   ███
-  ██ ██  
-   ███   
-  ████   
- ██  ██  
-██  ██ ██
-██████████
-```
-38 bricks. Mixed colors and tricky angles.
-
-After Level 5, levels loop back to Level 1 with **faster ball speed**.
+- `game.js`: Central state machine and physics orchestrator.
+- `gestures.js`: Advanced normalization and majority-vote logic.
+- `renderer.js`: Post-processed Three.js scene and effect manager.
+- `physics.js`: Rapier3D WASM bridge and body creators.
+- `levels.js`: Handcrafted (1-15) and procedural (16+) design.
+- `powerups.js`: Falling orb and trail logic.
+- `ui.js`: DOM, HUD arcs, and LocalStorage leaderboard.
 
 ---
 
-## 🎨 Visual Effects
+## 🤝 Getting Started
 
-- **Neon glow** on paddle, ball, and bricks using emissive materials
-- **Point lights** attached to ball and paddle for dynamic lighting
-- **Debris fragments** on brick destruction (physics-simulated with fade-out)
-- **Screen flash** on Smash Mode activation
-- **Combo popups** with scale-in animation for x3+ chains
-- **Grid floor** with dark ambient lighting for depth
-- **Shadow mapping** (PCFSoftShadowMap) on all game objects
+1. Open `index.html` in a local server (e.g., `python -m http.server`).
+2. Allow Webcam permissions.
+3. Use your hand to control the paddle.
+4. Chain combos and use abilities to reach the Hall of Fame.
 
 ---
 
-## 🏛️ Technical Architecture
-
-```
-index.html          → Entry point, import maps, Tailwind CSS layout
-├── game.js         → Main game loop, state machine, collision handling
-├── physics.js      → Rapier3D WASM wrapper, rigid bodies, debris spawning
-├── renderer.js     → Three.js scene, camera, lighting, mesh creation
-├── gestures.js     → MediaPipe Hands, webcam feed, gesture classification
-├── levels.js       → Level layout matrices (10×N grids)
-├── powerups.js     → Power-up system (planned)
-└── ui.js           → DOM manipulation, HUD, combo popups, skeleton drawing
-```
-
-### Dependencies (loaded via CDN)
-
-| Library | Version | CDN | Purpose |
-|---------|---------|-----|---------|
-| Three.js | r160 | esm.sh | 3D rendering, WebGL |
-| Rapier3D | 0.12 | esm.sh (compat) | Physics engine (WASM) |
-| MediaPipe Hands | latest | jsdelivr | Hand landmark detection |
-| MediaPipe Camera | latest | jsdelivr | Webcam feed management |
-| MediaPipe Drawing | latest | jsdelivr | Skeleton overlay |
-| Tailwind CSS | 3.x | Play CDN | UI styling |
-
-### Physics Engine Notes
-- Uses **Rapier3D-compat** (bundles WASM binary, no CORS issues)
-- Ball has **CCD enabled** (Continuous Collision Detection) to prevent tunneling at high speeds
-- Ball gravity is **disabled** (gravity scale = 0) for arcade-style 2D-plane movement
-- Bricks are **fixed** bodies (immovable)
-- Paddle is **kinematic position-based** (moved by gesture input)
-- Debris are **dynamic** bodies with applied impulse and torque
-
----
-
-## 🛠️ Restart / Reset Behavior
-
-- **Play Again button** appears on Game Over screen
-- Clicking it:
-  - Hides the Game Over overlay
-  - Resets score to 0, lives to 3, level to 1, combo to x1
-  - Destroys and recreates the paddle
-  - Clears all bricks and reloads Level 1
-  - Spawns a fresh ball with randomized starting angle
-- **Level transition**: When all bricks are cleared, the next level loads automatically with a level clear bonus
-
----
-
-## 📁 Project Structure
-
-```
-gesture-brick-breaker/
-├── index.html          # Main HTML entry point
-├── game.js             # Game orchestrator & collision logic
-├── physics.js          # Rapier3D physics wrapper
-├── renderer.js         # Three.js 3D renderer
-├── gestures.js         # MediaPipe hand tracking
-├── levels.js           # Level layout definitions
-├── powerups.js         # Power-up system (WIP)
-├── ui.js               # UI & HUD management
-├── .gitignore          # Excludes node_modules
-├── package.json        # npm metadata
-└── README.md           # This file
-```
-
----
-
-## 🤝 Contributing
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Commit changes (`git commit -m 'Add new feature'`)
-4. Push to branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-MIT License — feel free to use, modify, and distribute.
-
----
-
-**Built with ❤️ using Three.js, Rapier3D, and MediaPipe Hands**
+**Built with ❤️ and advanced geometry.**

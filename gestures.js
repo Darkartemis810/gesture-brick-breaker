@@ -1,7 +1,12 @@
 /**
  * gestures.js
- * Initializes MediaPipe Hands. Extracts 21 landmarks, classifies gestures,
- * and maintains the EMA-smoothed paddle control output.
+ * Advanced gesture classification system.
+ * 
+ * Ported from Python feature engineering logic:
+ * - Wrist-relative and scale-invariant normalization.
+ * - Distance and angle feature extraction.
+ * - 5-frame majority-vote smoothing.
+ * - 5 Gestures: OPEN_HAND, FIST, PINCH, PUNCH, PEACE.
  */
 
 import { UI } from './ui.js';
@@ -10,38 +15,49 @@ export const Gestures = {
     hands: null,
     camera: null,
     
+    // Result state exposed to game.js
     state: {
         active: false,
-        type: 'none', // 'open', 'fist', 'punch', 'none'
-        paddleX: 0.5, // Normalized [0, 1]
+        type: 'none',       // Smooth result: 'open', 'fist', 'pinch', 'punch', 'peace'
+        confidence: 0,      // Majority-vote ratio
+        paddleX: 0.5,       // EMA-smoothed normalized [0, 1]
         rawX: 0.5,
-        lastZ: [],
-        zVelocity: 0,
-        smashCooldown: 0
+        smashCooldown: 0    // Internal tracking for UI/gameplay
     },
     
-    config: {
-        emaAlpha: 0.20, // Slightly more responsive
-        deadzone: 0.01,  // Lower deadzone for better micro-adjustments
-        zHistoryLen: 5,
-        punchZThreshold: -0.05, // Sharp decrease in relative depth
-        punchVThreshold: -0.015
+    // Internal tracking for smoothing and velocity
+    _internal: {
+        history: [],        // Recent classification types for majority voting
+        zHistory: [],       // Recent palm depth for velocity
+        lastZ: 0,
+        lastTime: Date.now()
     },
 
+    config: {
+        emaAlpha: 0.25,      // Smoothness of paddle movement
+        deadzone: 0.005,     // Sensitivity of paddle movement
+        bufferSize: 5,       // Majority vote window
+        punchZThreshold: -0.04, // forward velocity threshold
+        pinchThreshold: 0.15, // normalized distance threshold
+        peaceExtensionThreshold: 0.8 // normalized extension threshold
+    },
+
+    /**
+     * Initialize MediaPipe Hands and webcam stream.
+     */
     async init() {
         const videoElement = UI.elements.webcamVideo;
         const canvasElement = UI.elements.webcamCanvas;
         
-        // Need exact matching sizes for the canvas drawing to align
         videoElement.addEventListener('loadeddata', () => {
             canvasElement.width = videoElement.videoWidth;
             canvasElement.height = videoElement.videoHeight;
         });
 
-        // Initialize MediaPipe Hands globally loaded via CDN
+        // Load Hands from global CDNs
         const Hands = window.Hands || window.mpHands?.Hands;
         if (!Hands) {
-            console.error("MediaPipe Hands library not loaded from CDN!");
+            console.error("MediaPipe Hands library not loaded!");
             return;
         }
         
@@ -60,11 +76,10 @@ export const Gestures = {
 
         const Camera = window.Camera || window.mpCamera?.Camera;
         if (!Camera) {
-             console.error("MediaPipe Camera util not loaded from CDN!");
+             console.error("MediaPipe Camera util not loaded!");
              return;
         }
 
-        // Start WebCam
         this.camera = new Camera(videoElement, {
             onFrame: async () => {
                 await this.hands.send({image: videoElement});
@@ -74,93 +89,131 @@ export const Gestures = {
         });
         
         this.camera.start();
-        console.log("MediaPipe initialized and camera started.");
+        console.log("Advanced Gesture System Initialized.");
     },
 
+    /**
+     * Process high-level results from MediaPipe.
+     */
     onResults(results) {
         if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
             this.state.active = false;
             this.state.type = 'none';
+            this._internal.history = [];
             UI.updateGestureStatus(this.state);
             UI.clearWebcamCanvas();
             return;
         }
 
         this.state.active = true;
-        const landmarks = results.multiHandLandmarks[0]; // Primary hand
+        const landmarks = results.multiHandLandmarks[0];
         
-        // Draw real-time dots
+        // 1. Draw debug info
         UI.drawSkeleton(landmarks);
         
-        // Classify Gesture
-        this.classifyGesture(landmarks);
+        // 2. Normalize and Classify
+        const rawType = this.classify(landmarks);
+        this.smoothType(rawType);
         
-        // Compute Paddle Control (EMA Smoothing)
-        // Use Index MCP (landmark 5) or Middle MCP (landmark 9) X coord
-        // Important: Image is mirrored horizontally natively, so X needs reversing 
-        // to feel natural if tracking from webcam, but standard MP mirrored means 1.0 - x
-        let rawX = 1.0 - landmarks[9].x; 
+        // 3. Compute Paddle Position (EMA)
+        let rawX = 1.0 - landmarks[9].x; // Mirrored
+        rawX = Math.max(0, Math.min(1, rawX));
         
-        // Clamp to play area
-        rawX = Math.max(0.05, Math.min(0.95, rawX));
-        
-        // Deadzone check
         if (Math.abs(rawX - this.state.rawX) > this.config.deadzone) {
             this.state.rawX = rawX;
         }
-        
-        // Exponential Moving Average
         this.state.paddleX = (this.config.emaAlpha * this.state.rawX) + ((1 - this.config.emaAlpha) * this.state.paddleX);
 
-        // Update UI Side Panel
+        // 4. Update UI
         UI.updateGestureStatus(this.state);
     },
-    
-    classifyGesture(landmarks) {
-        // Landmarks: 0=wrist, 5=index MCP, 8=index tip
-        
-        const dist = (p1, p2) => Math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2);
-        
-        // A finger is folded if its tip is closer to the wrist than its MCP is to the wrist
-        // Or closer compared to the PIP joint. We use a simple ratio check for robustness.
-        const isFingerClosed = (tipIdx, mcpIdx) => {
-            return dist(landmarks[tipIdx], landmarks[0]) < dist(landmarks[mcpIdx], landmarks[0]) * 1.2;
-        };
 
-        // Check if index, middle, ring, pinky are folded
-        const closedCount = [
-            isFingerClosed(8, 5),
-            isFingerClosed(12, 9),
-            isFingerClosed(16, 13),
-            isFingerClosed(20, 17)
-        ].filter(Boolean).length;
+    /**
+     * Performs geometrical classification using normalized landmarks.
+     */
+    classify(landmarks) {
+        // Step A: Basic Math Helpers
+        const dist = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2) + Math.pow(p1.z - p2.z, 2));
+        
+        // Reference length (wrist to middle MCP) for scale invariance
+        const refDist = dist(landmarks[0], landmarks[9]);
+        if (refDist < 0.01) return 'none';
 
-        // If at least 3 fingers are folded, count it as a fist. This makes it much more forgiving.
-        if (closedCount >= 3) {
-            this.state.type = 'fist';
-        } else {
-            this.state.type = 'open';
+        // Step B: Feature Extraction
+        // Extensions (distance from tip to corresponding MCP normalized by refDist)
+        const extensions = [
+            dist(landmarks[4], landmarks[2]) / refDist,  // Thumb
+            dist(landmarks[8], landmarks[5]) / refDist,  // Index
+            dist(landmarks[12], landmarks[9]) / refDist, // Middle
+            dist(landmarks[16], landmarks[13]) / refDist,// Ring
+            dist(landmarks[20], landmarks[17]) / refDist // Pinky
+        ];
+
+        // Pinch check (Thumb tip to Index tip)
+        const pinchDist = dist(landmarks[4], landmarks[8]) / refDist;
+
+        // Punch/Z-Velocity check
+        const avgZ = (landmarks[5].z + landmarks[9].z + landmarks[13].z + landmarks[17].z) / 4;
+        const now = Date.now();
+        const dt = (now - this._internal.lastTime) / 1000;
+        let zVelocity = 0;
+        if (dt > 0) {
+            zVelocity = (avgZ - this._internal.lastZ) / dt;
         }
+        this._internal.lastZ = avgZ;
+        this._internal.lastTime = now;
+
+        // Step C: Decision Logic (Rules)
         
-        // Punch Detection (Smash Mode) using Z-Depth velocity of the Wrist/Palm
-        // MediaPipe Z is roughly proportional to distance from camera relative to wrist.
-        // Averaging Z of MCPs gives a more stable proxy for "hand depth scale"
-        const avgZ = (landmarks[5].z + landmarks[9].z + landmarks[13].z + landmarks[17].z) / 4.0;
-        
-        this.state.lastZ.push(avgZ);
-        if (this.state.lastZ.length > this.config.zHistoryLen) {
-            this.state.lastZ.shift();
+        // 1. PUNCH (Dynamic check)
+        if (zVelocity < this.config.punchZThreshold) {
+            return 'punch';
         }
-        
-        if (this.state.lastZ.length === this.config.zHistoryLen) {
-            // Calculate pseudo velocity
-            this.state.zVelocity = this.state.lastZ[this.config.zHistoryLen - 1] - this.state.lastZ[0];
-            
-            // If z-velocity is very negative, hand moved rapidly toward camera
-            if (this.state.zVelocity < this.config.punchVThreshold && Date.now() > this.state.smashCooldown) {
-                this.state.type = 'punch';
-                // Note: The game loop consumes this state and handles the 8s cooldown UI.
+
+        // 2. PINCH
+        if (pinchDist < this.config.pinchThreshold) {
+            return 'pinch';
+        }
+
+        // 3. PEACE (Only index and middle extended)
+        if (extensions[1] > this.config.peaceExtensionThreshold && 
+            extensions[2] > this.config.peaceExtensionThreshold &&
+            extensions[3] < 0.6 && extensions[4] < 0.6) {
+            return 'peace';
+        }
+
+        // 4. FIST vs OPEN_HAND
+        const extendedCount = extensions.filter(e => e > 0.7).length;
+        if (extendedCount <= 1) return 'fist';
+        if (extendedCount >= 4) return 'open';
+
+        return 'open'; // Default fallback
+    },
+
+    /**
+     * Smoothes the gesture type using a majority vote buffer.
+     */
+    smoothType(newType) {
+        this._internal.history.push(newType);
+        if (this._internal.history.length > this.config.bufferSize) {
+            this._internal.history.shift();
+        }
+
+        // Count occurrences
+        const counts = {};
+        this._internal.history.forEach(t => counts[t] = (counts[t] || 0) + 1);
+
+        // Find winner
+        let winner = 'none';
+        let maxCount = 0;
+        for (const t in counts) {
+            if (counts[t] > maxCount) {
+                maxCount = counts[t];
+                winner = t;
             }
         }
+
+        this.state.type = winner;
+        this.state.confidence = maxCount / this._internal.history.length;
     }
 };
