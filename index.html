@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture Brick Breaker</title>
+    
+    <!-- Tailwind CSS (Play CDN for rapid dev) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            dark: '#0a0a0f',
+                            neonCyan: '#00f3ff',
+                            neonMagenta: '#ff00ff',
+                            neonPurple: '#b300ff',
+                            neonGreen: '#39ff14'
+                        }
+                    },
+                    boxShadow: {
+                        'neon-cyan': '0 0 10px #00f3ff, 0 0 20px #00f3ff',
+                        'neon-magenta': '0 0 10px #ff00ff, 0 0 20px #ff00ff',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0a0a0f; color: white; overflow: hidden; }
+        .text-neon-cyan { text-shadow: 0 0 5px #00f3ff, 0 0 10px #00f3ff; }
+        .text-neon-magenta { text-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff; }
+        
+        /* Side panel container */
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        
+        /* Hide media pipe video initially */
+        #webcam-video { display: none; transform: scaleX(-1); } /* Mirror */
+        #webcam-canvas { transform: scaleX(-1); } /* Mirror drawing */
+    </style>
+
+    <!-- Import Maps for ES Modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://esm.sh/three@0.160.0",
+            "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/",
+            "@dimforge/rapier3d": "https://esm.sh/@dimforge/rapier3d-compat@0.12.0"
+        }
+    }
+    </script>
+    
+    <!-- MediaPipe Hands (Classic Script Tag approach is easiest for MediaPipe CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+</head>
+<body class="bg-brand-dark font-sans text-gray-100 flex flex-col h-screen w-screen overflow-hidden">
+
+    <!-- Header Bar -->
+    <header class="h-16 border-b border-gray-800 flex items-center justify-between px-6 shrink-0 bg-brand-dark z-10">
+        <h1 class="text-2xl font-bold text-brand-neonCyan text-neon-cyan tracking-wider">GESTURE BRICK BREAKER</h1>
+        
+        <div class="flex items-center space-x-8">
+            <div class="flex flex-col items-center">
+                <span class="text-xs text-gray-400 uppercase tracking-widest">Score</span>
+                <span id="score-display" class="text-xl font-mono text-white">00000</span>
+            </div>
+            
+            <div class="flex flex-col items-center">
+                <span class="text-xs text-gray-400 uppercase tracking-widest">Level</span>
+                <span id="level-display" class="text-xl font-mono text-brand-neonMagenta">01</span>
+            </div>
+            
+            <div class="flex flex-col items-center">
+                <span class="text-xs text-gray-400 uppercase tracking-widest">Combo</span>
+                <span id="combo-display" class="text-xl font-mono text-brand-neonPurple">x1</span>
+            </div>
+            
+            <button id="start-btn" class="px-6 py-2 border-2 border-brand-neonCyan text-brand-neonCyan rounded-full hover:bg-brand-neonCyan hover:text-black transition-all shadow-neon-cyan font-bold uppercase tracking-wide disabled:opacity-50 disabled:cursor-not-allowed">
+                Start Game
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-row overflow-hidden">
+        
+        <!-- Game Canvas (75%) -->
+        <main class="w-3/4 h-full relative" id="game-viewport">
+            <!-- Three.js Canvas injected here -->
+            
+            <!-- Pause / Game Over Overlays -->
+            <div id="overlay-screen" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-20 pointer-events-none hidden">
+                <h2 id="overlay-title" class="text-6xl font-black text-brand-neonCyan text-neon-cyan mb-4 uppercase">PAUSED</h2>
+                <p id="overlay-msg" class="text-xl text-gray-300">Raise fist to resume</p>
+                
+                <div id="leaderboard-container" class="mt-8 hidden flex-col items-center">
+                    <h3 class="text-2xl text-brand-neonMagenta mb-2">Top Scores</h3>
+                    <ul id="leaderboard-list" class="space-y-2 text-lg font-mono"></ul>
+                </div>
+            </div>
+            
+            <!-- Smash Flash -->
+            <div id="smash-flash" class="absolute inset-0 bg-white opacity-0 pointer-events-none z-10 transition-opacity duration-200"></div>
+        </main>
+
+        <!-- Side Panel (25%) -->
+        <aside class="w-1/4 h-full border-l border-gray-800 bg-gray-900/50 flex flex-col p-4 space-y-4 shrink-0 overflow-y-auto">
+            
+            <!-- Webcam & Tracking Preview -->
+            <div class="rounded-lg overflow-hidden border border-gray-700 bg-black relative aspect-video flex-shrink-0">
+                <video id="webcam-video" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline></video>
+                <canvas id="webcam-canvas" class="absolute inset-0 w-full h-full object-cover"></canvas>
+                <div class="absolute bottom-2 left-2 px-2 py-1 bg-black/60 rounded text-xs text-gray-300 font-mono tracking-wide z-10">Cam Feed</div>
+            </div>
+            
+            <!-- Status Badge -->
+            <div id="status-badge" class="py-3 px-4 rounded-md text-center font-bold tracking-widest uppercase transition-colors duration-300 bg-gray-800 text-gray-400">
+                WAITING FOR CAMERA
+            </div>
+            
+            <!-- Gesture Controls Legend -->
+            <div class="flex-1 border border-gray-800 rounded-lg p-4 flex flex-col space-y-4">
+                <h3 class="text-sm text-gray-400 uppercase tracking-widest border-b border-gray-800 pb-2">Active Gestures</h3>
+                
+                <div id="gesture-open" class="flex items-center space-x-3 p-2 rounded transition-colors duration-200 opacity-50">
+                    <div class="w-8 h-8 rounded-full border-2 border-brand-neonCyan flex items-center justify-center text-lg">✋</div>
+                    <div class="flex flex-col">
+                        <span class="font-bold text-sm">Open Hand</span>
+                        <span class="text-xs text-gray-400">Paddle Follows Hand</span>
+                    </div>
+                </div>
+                
+                <div id="gesture-fist" class="flex items-center space-x-3 p-2 rounded transition-colors duration-200 opacity-50">
+                    <div class="w-8 h-8 rounded-full border-2 border-brand-neonPurple flex items-center justify-center text-lg">✊</div>
+                    <div class="flex flex-col">
+                        <span class="font-bold text-sm">Closed Fist</span>
+                        <span class="text-xs text-gray-400">Paddle Follows Hand</span>
+                    </div>
+                </div>
+                
+                <div id="gesture-punch" class="flex items-center space-x-3 p-2 rounded transition-colors duration-200 opacity-50 relative">
+                    <div class="w-8 h-8 rounded-full border-2 border-brand-neonMagenta flex items-center justify-center text-lg">👊</div>
+                    <div class="flex flex-col">
+                        <span class="font-bold text-sm">Punch Forward</span>
+                        <span class="text-xs text-gray-400">SMASH MODE (Cone radius)</span>
+                    </div>
+                    
+                    <!-- Cooldown ring overlay -->
+                    <div id="smash-cooldown" class="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full border border-gray-600 flex items-center justify-center text-[10px] hidden">
+                        8s
+                    </div>
+                </div>
+                
+                <div class="mt-auto pt-4 text-xs text-gray-500 flex flex-col space-y-2">
+                    <div class="flex justify-between">
+                        <span>Lives Remaining</span>
+                        <div id="lives-display" class="flex space-x-1">
+                            <span class="text-red-500">❤️</span>
+                            <span class="text-red-500">❤️</span>
+                            <span class="text-red-500">❤️</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Footer Legend -->
+    <footer class="h-8 border-t border-gray-800 flex items-center justify-center text-xs text-gray-500 bg-brand-dark shrink-0 pb-1">
+        <span class="font-mono">Any Hand Gesture → Steer Paddle  |  Punch Forward → SMASH</span>
+    </footer>
+
+    <!-- Main Entry Module -->
+    <script type="module" src="./game.js"></script>
+
+</body>
+</html>
