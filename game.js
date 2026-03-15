@@ -26,9 +26,9 @@ class Game {
             bricks: [],
             
             // Core Config
-            ballBaseSpeed: 14,    // Slightly slower for better control
-            paddleWidth: 7,       // Wider paddle for easier play
-            fieldExtents: { x: 19, z: 14 } // Valid playable space bounds
+            ballBaseSpeed: 15,
+            paddleWidth: 7,
+            fieldExtents: { x: 18, z: 14 } // Tighter bounds to keep ball visible
         };
         
         this.gameLoop = this.gameLoop.bind(this);
@@ -68,7 +68,7 @@ class Game {
         const thick = 2;
         const h = 5;
         
-        // Top Wall
+        // Top Wall (back of field)
         Physics.addWall(0, h/2, -fd + thick/2, fw*2, h, thick);
         // Left Wall
         Physics.addWall(-fw + thick/2, h/2, 0, thick, h, fd*2);
@@ -81,18 +81,21 @@ class Game {
 
     resetBall() {
         if (this.state.ballBody) {
-             // We can't easily reset a Rapier body's position instantly 
-             // without creating rigid body anomalies in some versions.
-             // The safest way is to destroy and recreate it.
              Physics.removeObject(this.ballMesh, this.state.ballBody);
              Renderer.scene.remove(this.ballMesh);
         }
         
         this.ballMesh = Renderer.createBall(0.6);
-        this.ballMesh.position.set(0, 0.6, 5); // Start above paddle
+        this.ballMesh.position.set(0, 0.6, 8); // Start closer to paddle
         
-        // Give it a starting velocity heading UP and slightly RIGHT
-        const velocity = { x: 5, y: 0, z: -10 }; 
+        // Give it a starting velocity heading UP and slightly to one side
+        const angle = (Math.random() - 0.5) * 0.8; // Random slight angle
+        const speed = this.state.ballBaseSpeed;
+        const velocity = { 
+            x: Math.sin(angle) * speed, 
+            y: 0, 
+            z: -Math.cos(angle) * speed  
+        };
         const { body, collider } = Physics.addBall(this.ballMesh, 0.6, velocity);
         
         this.state.ballBody = body;
@@ -189,33 +192,70 @@ class Game {
     }
     
     addScore(points) {
-        this.state.score += (points * this.state.combo);
+        // Combo multiplier bonus: x1=100, x2=200, x3=300, x5=500, x10=1000!
+        const comboPoints = points * this.state.combo;
+        this.state.score += comboPoints;
         UI.setScore(this.state.score);
         
+        // Show floating combo text for big combos
+        if (this.state.combo >= 3) {
+            UI.showComboPopup(`x${this.state.combo} COMBO! +${comboPoints}`);
+        }
+        
+        // Increase combo
         this.state.combo++;
         UI.setCombo(this.state.combo);
         
+        // Combo window: 3 seconds to maintain combo
         clearTimeout(this.state.comboTimer);
         this.state.comboTimer = setTimeout(() => {
             this.state.combo = 1;
             UI.setCombo(1);
-        }, 2000);
+        }, 3000); // 3 seconds instead of 2 for more forgiving combos
     }
 
     handleCollisions() {
-        // To handle collisions safely, we should drain the collision event queue
-        // Rapier exposes an active event queue. For simplicity in this demo,
-        // we'll do proximity checks or rely on the drainQueue method if used.
-        // A robust way mapping to Rapier 0.12+ in JS:
+        if (!this.state.ballBody) return;
         
         let ballP = this.state.ballBody.translation();
         let ballV = this.state.ballBody.linvel();
         
+        // 0. STRICT BOUNDARY ENFORCEMENT - Ball must NEVER leave the visible area
+        const maxX = this.state.fieldExtents.x - 1;
+        const minZ = -28; // Far back wall
+        const maxZ = 15;  // Just past paddle
+        let clamped = false;
+        
+        if (ballP.x > maxX) {
+            ballP.x = maxX;
+            ballV.x = -Math.abs(ballV.x);
+            clamped = true;
+        } else if (ballP.x < -maxX) {
+            ballP.x = -maxX;
+            ballV.x = Math.abs(ballV.x);
+            clamped = true;
+        }
+        
+        if (ballP.z < minZ) {
+            ballP.z = minZ;
+            ballV.z = Math.abs(ballV.z);
+            clamped = true;
+        }
+        
+        if (clamped) {
+            this.state.ballBody.setTranslation({x: ballP.x, y: 0.6, z: ballP.z}, true);
+            this.state.ballBody.setLinvel({x: ballV.x, y: 0, z: ballV.z}, true);
+        }
+        
         // 1. Lose condition check
-        if (ballP.z > 14.5) {
+        if (ballP.z > maxZ) {
              // Ball passed the paddle
              this.state.lives--;
              UI.setLives(this.state.lives);
+             
+             // Reset combo on life lost
+             this.state.combo = 1;
+             UI.setCombo(1);
              
              if (this.state.lives <= 0) {
                  this.state.isPlaying = false;
@@ -224,14 +264,15 @@ class Game {
                  UI.elements.startBtn.textContent = "Play Again";
                  Physics.removeObject(this.ballMesh, this.state.ballBody);
                  Renderer.scene.remove(this.ballMesh);
+                 this.state.ballBody = null;
              } else {
+                 UI.showComboPopup(`LIFE LOST! ${this.state.lives} remaining`);
                  this.resetBall();
              }
              return;
         }
         
         // 2. Paddle bounce logic (Custom angle reflection)
-        // If ball hits paddle, we adjust X velocity based on where it hit.
         const padP = this.state.paddleBody.translation();
         
         // Simple bounding box intersection for paddle
@@ -239,20 +280,24 @@ class Game {
             ballP.x > padP.x - (this.state.paddleWidth/2 + 0.6) && 
             ballP.x < padP.x + (this.state.paddleWidth/2 + 0.6)) {
             
-            // Hit!
-            // Ensure ball is moving towards the player so we don't trap it inside the paddle
+            // Ensure ball is moving towards the player so we don't trap it
             if (ballV.z > 0) {
                 const hitDeltaX = ballP.x - padP.x;
                 const normalizeHit = hitDeltaX / (this.state.paddleWidth / 2); // -1 to 1
                 
                 // Set new velocity
-                const speed = this.state.ballBaseSpeed * (1 + (this.state.level * 0.1));
-                const bounceAngle = normalizeHit * (Math.PI / 3); // Max 60 deg bounce
+                const speed = this.state.ballBaseSpeed * (1 + (this.state.level * 0.08));
+                const bounceAngle = normalizeHit * (Math.PI / 3.5); // Max ~51 deg bounce (tighter angles)
                 
                 this.state.ballBody.setLinvel({
                     x: Math.sin(bounceAngle) * speed,
                     y: 0,
-                    z: -Math.cos(bounceAngle) * speed // Reflect back into screen
+                    z: -Math.cos(bounceAngle) * speed
+                }, true);
+                
+                // Push ball slightly above paddle to prevent re-triggering
+                this.state.ballBody.setTranslation({
+                    x: ballP.x, y: 0.6, z: padP.z - 1.6
                 }, true);
             }
         }
@@ -260,14 +305,11 @@ class Game {
         // 3. Brick collisions
         let brickHit = false;
         
-        // Since we didn't setup the complex event queue handler, we do a quick AABB check
-        // for each active brick against the ball. This is fast enough for <100 bricks.
         for (let i = 0; i < this.state.bricks.length; i++) {
             const b = this.state.bricks[i];
             if (!b.active) continue;
             
             const bp = b.body.translation();
-            // Brick is roughly 3.2x1x1.2. Check distance.
             const dx = Math.abs(ballP.x - bp.x);
             const dz = Math.abs(ballP.z - bp.z);
             
@@ -277,10 +319,12 @@ class Game {
                 b.active = false;
                 brickHit = true;
                 
-                this.addScore(100);
+                // Score based on brick type (higher type = more points)
+                const brickPoints = b.body.userData.type * 50;
+                this.addScore(brickPoints);
                 
-                // Spawn Debris
-                const debris = Physics.spanDebris(bp, b.body.userData.color, 10);
+                // Spawn Debris (reduced count for performance - was 10, now 4)
+                const debris = Physics.spanDebris(bp, b.body.userData.color, 4);
                 debris.forEach(d => Renderer.spawnFragmentMesh(d, b.body.userData.color));
                 
                 // Remove brick
@@ -288,37 +332,41 @@ class Game {
                 Renderer.scene.remove(b.mesh);
                 
                 // Reflect ball (simplified reflection)
-                // Determine which axis was hit hardest to flip velocity
                 if (dx > dz) {
                     this.state.ballBody.setLinvel({x: -ballV.x, y: 0, z: ballV.z}, true);
                 } else {
                     this.state.ballBody.setLinvel({x: ballV.x, y: 0, z: -ballV.z}, true);
                 }
                 
-                break; // Only process one hit per frame to prevent chaos
+                break; // Only process one hit per frame
             }
         }
         
         if (brickHit) {
             // Check Level Win
-            if (!this.state.bricks.some(b => b.active)) {
+            const remaining = this.state.bricks.filter(b => b.active).length;
+            if (remaining === 0) {
                 this.state.level++;
                 UI.setLevel(this.state.level);
+                
+                // Level clear bonus!
+                const levelBonus = this.state.level * 1000;
+                this.state.score += levelBonus;
+                UI.setScore(this.state.score);
+                UI.showComboPopup(`LEVEL CLEAR! +${levelBonus} BONUS`);
+                
                 this.loadLevel(this.state.level);
                 this.resetBall();
             }
         }
         
-        // 4. Smash Logic (Cone Raycast)
+        // 4. Smash Logic (Punch gesture)
         if (Gestures.state.type === 'punch') {
             const now = Date.now();
             if (now > Gestures.state.smashCooldown) {
                 Gestures.state.smashCooldown = now + 8000;
                 UI.triggerSmashFlash();
-                console.log("SMASH TRIGGERED!");
                 
-                // Find all bricks within a radius of the paddle and blast them
-                // For simplicity, we just destroy the lowest 3 active bricks
                 let smashed = 0;
                 for (let i = this.state.bricks.length - 1; i >= 0; i--) {
                     const b = this.state.bricks[i];
@@ -327,7 +375,7 @@ class Game {
                         this.addScore(200);
                         
                         const bp = b.body.translation();
-                        const debris = Physics.spanDebris(bp, b.body.userData.color, 12);
+                        const debris = Physics.spanDebris(bp, b.body.userData.color, 3);
                         debris.forEach(d => Renderer.spawnFragmentMesh(d, b.body.userData.color));
                         Physics.removeObject(b.mesh, b.body);
                         Renderer.scene.remove(b.mesh);
@@ -336,25 +384,41 @@ class Game {
                         if (smashed >= 3) break;
                     }
                 }
+                
+                if (smashed > 0) {
+                    UI.showComboPopup(`SMASH! x${smashed} BRICKS!`);
+                }
             }
         }
 
-        // 5. Enforce constant speed (normalize velocity)
+        // 5. Enforce constant speed (normalize velocity) — every frame
         const v = this.state.ballBody.linvel();
-        const currentSpeed = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-        const targetSpeed = this.state.ballBaseSpeed * (1 + (this.state.level * 0.1));
+        const currentSpeed = Math.sqrt(v.x*v.x + v.z*v.z); // ignore Y
+        const targetSpeed = this.state.ballBaseSpeed * (1 + (this.state.level * 0.08));
         
-        if (currentSpeed > 0 && Math.abs(currentSpeed - targetSpeed) > 0.5) {
+        if (currentSpeed > 0.1) {
             const scale = targetSpeed / currentSpeed;
-            // Freeze Y to 0 so ball doesn't fly up/down out of bounds
             this.state.ballBody.setLinvel({
                 x: v.x * scale,
-                y: 0, // Force 2D plane Movement
+                y: 0,
                 z: v.z * scale
             }, true);
-            // Also force ball Y position back to 0.6 if it drifted
-            const p = this.state.ballBody.translation();
+        }
+        
+        // Force ball Y position
+        const p = this.state.ballBody.translation();
+        if (Math.abs(p.y - 0.6) > 0.1) {
             this.state.ballBody.setTranslation({x: p.x, y: 0.6, z: p.z}, true);
+        }
+        
+        // Prevent ball from getting stuck horizontally 
+        const vv = this.state.ballBody.linvel();
+        if (Math.abs(vv.z) < 1.0) {
+            this.state.ballBody.setLinvel({
+                x: vv.x,
+                y: 0,
+                z: vv.z > 0 ? 3 : -3  // Give it a nudge in Z
+            }, true);
         }
     }
 
@@ -367,9 +431,12 @@ class Game {
             if (this.state.paddleBody && Gestures.state.active) {
                 // Map 0-1 to X bounds
                 const targetX = (Gestures.state.paddleX * (this.state.fieldExtents.x * 2)) - this.state.fieldExtents.x;
+                // Clamp paddle within the field
+                const clampedX = Math.max(-this.state.fieldExtents.x + this.state.paddleWidth/2, 
+                                 Math.min(this.state.fieldExtents.x - this.state.paddleWidth/2, targetX));
                 const lp = this.state.paddleBody.translation();
                 this.state.paddleBody.setNextKinematicTranslation({
-                    x: targetX,
+                    x: clampedX,
                     y: lp.y,
                     z: lp.z
                 });

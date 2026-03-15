@@ -27,6 +27,7 @@ export const UI = {
             
             webcamVideo: document.getElementById('webcam-video'),
             webcamCanvas: document.getElementById('webcam-canvas'),
+            comboPopup: document.getElementById('combo-popup'),
         };
         
         // Grab context for skeleton drawing
@@ -75,6 +76,24 @@ export const UI = {
         setTimeout(() => {
             this.elements.smashFlash.style.opacity = '0';
         }, 200);
+    },
+
+    showComboPopup(text) {
+        const popup = this.elements.comboPopup;
+        if (!popup) return;
+        const span = popup.querySelector('span');
+        span.textContent = text;
+        
+        // Reset animation
+        popup.classList.remove('opacity-0', 'scale-50');
+        popup.classList.add('opacity-100', 'scale-100');
+        
+        // Clear previous timer
+        clearTimeout(this._comboPopupTimer);
+        this._comboPopupTimer = setTimeout(() => {
+            popup.classList.remove('opacity-100', 'scale-100');
+            popup.classList.add('opacity-0', 'scale-50');
+        }, 1200);
     },
 
     updateGestureStatus(state) {
