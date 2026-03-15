@@ -155,9 +155,9 @@ export const Renderer = {
         return mesh;
     },
 
-    createBrick(x, y, z, w, h, d, colorRow) {
+    createBrick(x, y, z, w, h, d, colorType) {
         const colors = [0x00f3ff, 0x39ff14, 0xb300ff, 0xff00ff, 0xff5500];
-        const baseColor = colors[colorRow % colors.length];
+        const baseColor = colors[(colorType - 1) % colors.length];
         
         const geo = new THREE.BoxGeometry(w, h, d);
         const mat = new THREE.MeshStandardMaterial({

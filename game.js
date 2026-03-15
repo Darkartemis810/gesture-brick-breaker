@@ -26,8 +26,8 @@ class Game {
             bricks: [],
             
             // Core Config
-            ballBaseSpeed: 18,
-            paddleWidth: 6,
+            ballBaseSpeed: 14,    // Slightly slower for better control
+            paddleWidth: 7,       // Wider paddle for easier play
             fieldExtents: { x: 19, z: 14 } // Valid playable space bounds
         };
         
@@ -129,14 +129,14 @@ class Game {
         const cols = layout[0].length;
         const rows = layout.length;
         
-        const brickW = 3.6;
+        const brickW = 3.2;
         const brickH = 1.0;
-        const brickD = 1.5;
-        const paddingX = 0.4;
-        const paddingZ = 0.4;
+        const brickD = 1.2;
+        const paddingX = 0.3;
+        const paddingZ = 0.3;
         
         const startX = -((cols * (brickW + paddingX)) / 2) + (brickW / 2);
-        const startZ = -10; // Back of the field
+        const startZ = -12; // Further back for more room
         
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
@@ -145,7 +145,8 @@ class Game {
                     const x = startX + c * (brickW + paddingX);
                     const z = startZ + r * (brickD + paddingZ);
                     
-                    const { mesh, color } = Renderer.createBrick(x, 0.5, z, brickW, brickH, brickD, r);
+                    // Pass bType for color (not row index)
+                    const { mesh, color } = Renderer.createBrick(x, 0.5, z, brickW, brickH, brickD, bType);
                     const { body, collider } = Physics.addBrick(mesh, brickW, brickH, brickD, {
                         type: bType,
                         color: color
@@ -266,12 +267,12 @@ class Game {
             if (!b.active) continue;
             
             const bp = b.body.translation();
-            // Brick is roughly 3.6x1x1.5. Check distance.
+            // Brick is roughly 3.2x1x1.2. Check distance.
             const dx = Math.abs(ballP.x - bp.x);
             const dz = Math.abs(ballP.z - bp.z);
             
             // Sphere-AABB simplified check
-            if (dx < (3.6/2 + 0.6) && dz < (1.5/2 + 0.6)) {
+            if (dx < (3.2/2 + 0.6) && dz < (1.2/2 + 0.6)) {
                 // Hit!
                 b.active = false;
                 brickHit = true;
